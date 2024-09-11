@@ -18,8 +18,6 @@
        CompareIdeals(I,J)                   returns -1,0,1 as I<J,I=J,I>J in our ordering
 */
 
-ZZ := Integers();
-
 function UniqueMax(V)
     m,i:=Max(V);
     return m gt Max([V[j]:j in [1..#V]|j ne i]) select i else 0;
@@ -61,7 +59,6 @@ function SplitPrime(K,p)
     p:=Integers()!p;
     error if not IsPrime(p), Sprintf("Input p = %o to SplitPrime is not prime",p);
     if Degree(OK) eq 1 then return [ideal<OK|p>]; end if;
-    g:=DefiningPolynomial(OK);
     P:=[s[1]:s in Factorization(ideal<OK|p>)];          // prime ideals dividing p
     if #P eq 1 then return P; end if;                   // if there is only one prime above p, we are done.
     a:=K.1;
@@ -70,6 +67,15 @@ function SplitPrime(K,p)
     while true do
         // compute distinct factors of f in Zp[x]/(p^kZ_p[x])
         Zp:=pAdicRing(p,k);
+	try
+	    prec:=SuggestedPrecision(ChangeRing(g,Zp));
+	catch e
+	    k +:= 1; continue;
+	end try;
+	if k lt prec then
+	    k := prec;
+	    Zp:=pAdicRing(p,k);
+	end if;
         // trap precision issues and magma bugs
         try
             factors:=Factorization(ChangeRing(g,Zp));
@@ -78,25 +84,38 @@ function SplitPrime(K,p)
         end try;
         if #factors eq 0 then k:=k+1; continue; end if;
         H:=[R!ChangeRing(h[1],quo<Zp|p^k>) : h in factors|h[2] eq 1];
-        if #H eq #P then // if factors are distinct
-            // if each factor determines a unique prime pp in P for which v_pp((p^k,g(a))) is maximal, we are done
-            if #[h:h in H|UniqueMax([Valuation(ideal<OK|p^k,Evaluate(h,a)>,pp):pp in P]) gt 0] eq #P then break; end if;
+
+	// if factors are distinct and if each factor determines a unique
+	// prime pp in P for which v_pp((p^k,g(a))) is maximal, we are done
+        if
+	    #H ne #P or
+	    #[h:h in H|UniqueMax([Valuation(ideal<OK|p^k,Evaluate(h,a)>,pp):pp in P]) gt 0] ne #P
+	then
+	    error if k gt 1000, Sprintf("SplitPrime appears to be stuck in an infinite loop on input p = %o, a prime of %o", p, OK);   // abort if we appear to be stuck
+	    k:=k+1;
+	    continue;
         end if;
-        error if k gt 1000, Sprintf("SplitPrime appears to be stuck in an infinite loop on input p = %o, a prime of %o", p, OK);   // abort if we appear to be stuck
+
+	// Normalize polys to coefficients lie in [0,p^k-1]
+	H:=[R![c mod p^k : c in Coefficients(h)]:h in H];
+	// Match polys and prime ideals
+	assert #H eq #P;
+	S:=[];
+	for h in H do
+	    I:=ideal<OK|p^k,Evaluate(h,a)>;
+	    j := UniqueMax([Valuation(I,P[i]) : i in [1..#P]]);
+	    assert j ne 0;
+	    if Degree(h) ne RamificationIndex(P[j])*InertiaDegree(P[j]) then
+		break;
+	    end if;
+	    S:=Append(S,<P[j],h>);
+	end for;
+	if #S eq #H then
+	    break;
+	end if;
         k:=k+1;
     end while;
-    // Normalize polys to coefficients lie in [0,p^k-1]
-    H:=[R![c mod p^k : c in Coefficients(h)]:h in H];
-    // Match polys and prime ideals
-    assert #H eq #P;
-    S:=[];
-    for h in H do
-        I:=ideal<OK|p^k,Evaluate(h,a)>;
-        j := UniqueMax([Valuation(I,P[i]) : i in [1..#P]]);
-        assert j ne 0;
-        assert Degree(h) eq RamificationIndex(P[j])*InertiaDegree(P[j]);
-        S:=Append(S,<P[j],h>);
-    end for;
+
     S := Sort(S,func<s1,s2:prime:=p,prec:=k|ComparePrimeFactors(s1,s2,prime,prec)>);
     return [s[1]:s in S];
 end function;
@@ -135,6 +154,7 @@ end function;
 
 // Returns a list of ideals of prime power norm q in the number field Q[x]/(g(x)) ordered by exponent vector (weight, reverse lex)
 function IdealsOfPrimePowerNorm(K,q)
+    ZZ:=Integers();
     q:=Integers()!q;
     b,p,k := IsPrimePower(q);
     error if not b, Sprintf("Input q = %o to IdealsOfPrimePowerNorm is not a prime power.", q);
@@ -185,14 +205,14 @@ function IdealFromNormIndex(K,n,m)
     end if;
     pp:=[p[1]^p[2]:p in Factorization(n)];
     Q:=<IdealsOfPrimePowerNorm(K,q):q in pp>;
-    for S in Q do error if #S eq 0, Sprintf("No ideal with  norm %o and index %o exists in the number field %o", n, m, K); end for;
+    for S in Q do error if #S eq 0, Sprintf("No ideal with norm %o and index %o exists in the number field %o", n, m, K); end for;
     a := m-1;
     for j:=#Q to 1 by -1 do
         i:=a mod #Q[j];
         I *:= Q[j][i+1];
         a:=ExactQuotient(a-i,#Q[j]);
     end for;
-    error if a ne 0, Sprintf("No ideal with  norm %o and index %o exists in the number field %o", n, m, K);
+    error if a ne 0, Sprintf("No ideal with norm %o and index %o exists in the number field %o", n, m, K);
     return I;
 end function;
 
